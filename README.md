@@ -1,5 +1,6 @@
 # DPSTraceShader
  - 追踪 DPS
+ - 由 DPS 原版 `Penetrator.shader` 修改而成
 
 # Usage
  - 首先安装 [DPS](https://raliv.booth.pm/items/2825903)
