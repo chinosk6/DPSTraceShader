@@ -1,306 +1,320 @@
-Shader "chinosk6/DPSTraceAllCylinder"
+Shader "chinosk6/Transparent/DPSTraceAllCylinder"
 {
     Properties
     {
-        _MainTex("MainTex", 2D) = "white" {}
-        _Color("Color", Color) = (0,0,0,0)
-        _Metallic("Metallic", 2D) = "black" {}
-        _Smoothness("Smoothness", Range( 0 , 1)) = 1
-        _BumpMap("Normal Map", 2D) = "bump" {}
-        _Emission("Emission", 2D) = "black" {}
-        _EmissionPower("EmissionPower", Range( 0 , 3)) = 1
-        _Occlusion("Occlusion", 2D) = "white" {}
-        [Header(Penetration Entry Deformation)]_Squeeze("Squeeze Minimum Size", Range( 0 , 0.2)) = 0
-        _SqueezeDist("Squeeze Smoothness", Range( 0 , 0.1)) = 0
-        _BulgePower("Bulge Amount", Range( 0 , 1)) = 0
-        _BulgeOffset("Bulge Length", Range( 0 , 0.3)) = 0
-        _Length("Length of Penetrator Model", Range( 0 , 3)) = 0
-        [Header(Alignment Adjustment)]_EntranceStiffness("Entrance Stiffness", Range( 0.01 , 1)) = 0.01
-        [Header(Resting Curvature)]_Curvature("Curvature", Range( -1 , 1)) = 0
-        _ReCurvature("ReCurvature", Range( -1 , 1)) = 0
-        [Header(Movement)]_Wriggle("Wriggle Amount", Range( 0 , 1)) = 0
-        _WriggleSpeed("Wriggle Speed", Range( 0.1 , 30)) = 0.28
-        [Header(Toon Shading (Check to activate))]_CellShadingSharpness("Cell Shading Sharpness", Range( 0 , 1)) = 0
-        _ToonSpecularSize("ToonSpecularSize", Range( 0 , 1)) = 0
-        _ToonSpecularIntensity("ToonSpecularIntensity", Range( 0 , 1)) = 0
-        [Toggle(_TOONSHADING_ON)] _ToonShading("Toon Shading", Float) = 0
-        [Header(Advanced)]_OrificeChannel("OrificeChannel Please Use 0", Float) = 0
-        [HideInInspector] _texcoord( "", 2D ) = "white" {}
-        [HideInInspector] __dirty( "", Int ) = 1
-
-        // 圆柱体半径属性
+        // 圆柱体半径（完全由配置控制，与模型无关）
         _CylinderRadius("Cylinder Radius", Range(0,0.5)) = 0.5
-        // 透明度，用于控制 Lighting 渲染的透明度
-        _Opacity("Opacity", Range(0,1)) = 1
+
+        // 渐变方向（普通配置）：大于 0.5 时沿圆柱高度渐变，否则按圆周渐变
+        _VerticalGradient("Vertical Gradient (0: Circular, 1: Vertical)", Float) = 0
+
+        // 控制末端与光源点之间的距离（圆柱顶端距离目标光源的间隙）
+        _EndGap("End Gap", Range(0,1)) = 0.0
+
+        [Space(10)]
+
+        // 动态滚动效果及滚动速度（滚动效果在不同渐变模式下分别处理）
+        _Dynamic("Dynamic Gradient", Float) = 0
+        _ScrollSpeed("Scroll Speed", Range(0,100)) = 1
+
+        // 高级渐变配置（用于颜色插值）
+        _UseCustomGradient("Use Custom Gradient", Float) = 0
+        _GradColor1("Gradient Color 1", Color) = (1, 0, 0, 1)
+        _GradColor2("Gradient Color 2", Color) = (0, 1, 0, 1)
+        _GradColor3("Gradient Color 3", Color) = (0, 0, 1, 1)
+
+        [Space(10)]
+
+        // 封口配置：当 _UseCapTexture>0.5 时使用贴图，否则封口颜色与侧面渐变一致
+        _CapColor("Cap Color", Color) = (1,1,1,1)
+        _UseCapTexture("Use Cap Texture", Float) = 0
+        _CapTexture("Cap Texture", 2D) = "white" {}
+
+        // 是否生成起点（底部）封口（默认关闭）
+        _RenderBottomCap("Render Bottom Cap", Float) = 0
+
+        // 分段数（用于侧面和封口），范围 4～16，较低的值可优化性能
+        _Segments("Segments", Range(3,16)) = 8
+
+        _MainTex ("Fallback Texture", 2D) = "black" {}
     }
 
     SubShader
     {
-        // 修改为透明 Pass
-        Tags { "RenderType"="Transparent" "Queue"="Transparent" }
-        Cull Back
+        Tags { "VRCFallback"="Hidden" "RenderType"="Transparent" "Queue"="Transparent" }
+        Cull Off
         ZWrite Off
         Blend SrcAlpha OneMinusSrcAlpha
-        CGPROGRAM
-        #include "UnityPBSLighting.cginc"
-        #include "UnityShaderVariables.cginc"
-        #include "UnityCG.cginc"
-        #pragma target 3.0
-        #pragma multi_compile __ _TOONSHADING_ON
-        #pragma surface surf StandardCustomLighting keepalpha noshadow vertex:vertexDataFunc 
 
-        struct Input
-        {
-            float2 uv_texcoord;
-            float3 worldNormal;
-            INTERNAL_DATA
-            float3 worldPos;
-        };
-
-        struct SurfaceOutputCustomLightingCustom
-        {
-            half3 Albedo;
-            half3 Normal;
-            half3 Emission;
-            half Metallic;
-            half Smoothness;
-            half Occlusion;
-            half Alpha;
-            Input SurfInput;
-            UnityGIInput GIData;
-        };
-
-        uniform sampler2D _MainTex;
-        uniform float4 _MainTex_ST;
-        uniform float4 _Color;
-        uniform sampler2D _BumpMap;
-        uniform float4 _BumpMap_ST;
-        uniform sampler2D _Emission;
-        uniform float4 _Emission_ST;
-        uniform float _EmissionPower;
-        uniform sampler2D _Metallic;
-        uniform float4 _Metallic_ST;
-        uniform float _Smoothness;
-        uniform sampler2D _Occlusion;
-        uniform float4 _Occlusion_ST;
-        uniform float _CellShadingSharpness;
-        uniform float _ToonSpecularSize;
-        uniform float _ToonSpecularIntensity;
-
-        // 新增透明度 uniform
-        uniform float _Opacity;
-
-        #define RALIV_PENETRATOR;
-
-        #include "../Plugins/RalivDPS_Defines.cginc"
-        #include "../Plugins/RalivDPS_Functions.cginc"
-
-        void vertexDataFunc( inout appdata_full v, out Input o )
-        {
-            UNITY_INITIALIZE_OUTPUT( Input, o );
-            o.uv_texcoord = TRANSFORM_TEX(v.texcoord, _MainTex);
-            o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-            o.worldNormal = v.normal;
-        }
-
-        inline half4 LightingStandardCustomLighting( inout SurfaceOutputCustomLightingCustom s, half3 viewDir, UnityGI gi )
-        {
-            UnityGIInput data = s.GIData;
-            Input i = s.SurfInput;
-            half4 c = 0;
-            SurfaceOutputStandard s393 = (SurfaceOutputStandard)0;
-            float2 uv_MainTex = i.uv_texcoord * _MainTex_ST.xy + _MainTex_ST.zw;
-            float4 tex2DNode145 = tex2D(_MainTex, uv_MainTex);
-            float4 temp_output_146_0 = (tex2DNode145 * _Color);
-            s393.Albedo = temp_output_146_0.rgb;
-            float2 uv_BumpMap = i.uv_texcoord * _BumpMap_ST.xy + _BumpMap_ST.zw;
-            float3 tex2DNode147 = UnpackNormal(tex2D(_BumpMap, uv_BumpMap));
-            s393.Normal = WorldNormalVector(i, tex2DNode147);
-            float2 uv_Emission = i.uv_texcoord * _Emission_ST.xy + _Emission_ST.zw;
-            float4 tex2DNode283 = tex2D(_Emission, uv_Emission);
-            s393.Emission = (tex2DNode283 * _EmissionPower).rgb;
-            float2 uv_Metallic = i.uv_texcoord * _Metallic_ST.xy + _Metallic_ST.zw;
-            float4 tex2DNode148 = tex2D(_Metallic, uv_Metallic);
-            s393.Metallic = tex2DNode148.r;
-            s393.Smoothness = (tex2DNode148.a * _Smoothness);
-            float2 uv_Occlusion = i.uv_texcoord * _Occlusion_ST.xy + _Occlusion_ST.zw;
-            s393.Occlusion = tex2D(_Occlusion, uv_Occlusion).r;
-
-            data.light = gi.light;
-
-            UnityGI gi393 = gi;
-            #ifdef UNITY_PASS_FORWARDBASE
-            Unity_GlossyEnvironmentData g393 = UnityGlossyEnvironmentSetup(s393.Smoothness, data.worldViewDir, s393.Normal, float3(0,0,0));
-            gi393 = UnityGlobalIllumination(data, s393.Occlusion, s393.Normal, g393);
-            #endif
-
-            float3 surfResult393 = LightingStandard(s393, viewDir, gi393).rgb;
-            surfResult393 += s393.Emission;
-
-            #ifdef UNITY_PASS_FORWARDADD
-                surfResult393 -= s393.Emission;
-            #endif
-
-            #if defined(LIGHTMAP_ON) && (UNITY_VERSION < 560 || (defined(LIGHTMAP_SHADOW_MIXING) && !defined(SHADOWS_SHADOWMASK) && defined(SHADOWS_SCREEN)))
-                float4 ase_lightColor = 0;
-            #else
-                float4 ase_lightColor = _LightColor0;
-            #endif
-            float3 newWorldNormal396 = (WorldNormalVector(i, tex2DNode147));
-            float3 ase_worldPos = i.worldPos;
-            #if defined(LIGHTMAP_ON) && UNITY_VERSION < 560
-                float3 ase_worldlightDir = 0;
-            #else
-                float3 ase_worldlightDir = normalize(UnityWorldSpaceLightDir(ase_worldPos));
-            #endif
-            float dotResult5_g1 = dot(newWorldNormal396, ase_worldlightDir);
-            float temp_output_402_0 = (_CellShadingSharpness * 10.0);
-            UnityGI gi411 = gi;
-            float3 diffNorm411 = WorldNormalVector(i, tex2DNode147);
-            gi411 = UnityGI_Base(data, 1, diffNorm411);
-            float3 indirectDiffuse411 = gi411.indirect.diffuse + diffNorm411 * 0.0001;
-            float temp_output_470_0 = (1.0 - _ToonSpecularSize);
-            float temp_output_457_0 = (temp_output_470_0 * temp_output_470_0);
-            float3 normalizeResult446 = normalize(reflect(-ase_worldlightDir, newWorldNormal396));
-            float3 ase_worldViewDir = normalize(UnityWorldSpaceViewDir(ase_worldPos));
-            float dotResult418 = dot(normalizeResult446, ase_worldViewDir);
-            float saferPower437 = max(dotResult418, 0.0001);
-            float temp_output_437_0 = pow(saferPower437, 20.0);
-            float smoothstepResult449 = smoothstep(temp_output_457_0, (temp_output_457_0 + (((1.1 - temp_output_457_0) * 0.5))), temp_output_437_0);
-            #ifdef _TOONSHADING_ON
-                float4 staticSwitch436 = ((ase_lightColor * max(saturate((-temp_output_402_0 + ((dotResult5_g1*0.5 + 0.5) - 0.0) * ((temp_output_402_0 + 1.0) - -temp_output_402_0) / (1.0 - 0.0))), 0.1) * temp_output_146_0) + (float4(indirectDiffuse411, 0.0) * temp_output_146_0) + (ase_lightColor * saturate(smoothstepResult449) * _ToonSpecularIntensity));
-            #else
-                float4 staticSwitch436 = float4(surfResult393, 0.0);
-            #endif
-            c.rgb = staticSwitch436.rgb;
-            c.a = _Opacity;
-            return c;
-        }
-
-        inline void LightingStandardCustomLighting_GI(inout SurfaceOutputCustomLightingCustom s, UnityGIInput data, inout UnityGI gi)
-        {
-            s.GIData = data;
-        }
-
-        void surf(Input i, inout SurfaceOutputCustomLightingCustom o)
-        {
-            o.SurfInput = i;
-            o.Normal = float3(0,0,1);
-            float2 uv_MainTex = i.uv_texcoord * _MainTex_ST.xy + _MainTex_ST.zw;
-            float4 tex2DNode145 = tex2D(_MainTex, uv_MainTex);
-            float4 temp_output_146_0 = (tex2DNode145 * _Color);
-            o.Albedo = temp_output_146_0.rgb;
-        }
-        ENDCG
-
-        // 圆柱生成部分保持不变
+        // Pass 1：物体本体（全透明）
         Pass
         {
+            Tags { "VRCFallback"="Hidden" }
+            Name "Invisible"
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata { float4 vertex : POSITION; };
+            struct v2f { float4 pos : SV_POSITION; };
+
+            v2f vert(appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target { return fixed4(0, 0, 0, 0); }
+            ENDCG
+        }
+
+        // Pass 2：圆柱生成与封口
+        // 使用几何着色器处理多光源，每个符合条件的光源生成一根圆柱（侧面+封口）
+        Pass
+        {
+            Tags { "VRCFallback"="Hidden" "LightMode"="Always" }
             Name "Cylinders"
-            Tags { "LightMode"="Always" }
             Cull Off
             ZTest LEqual
             ZWrite On
+
             CGPROGRAM
             #pragma vertex CylinderVS
             #pragma geometry CylinderGS
             #pragma fragment CylinderPS
             #pragma target 4.0
+            #include "UnityCG.cginc"
 
+            // 侧面和封口参数
             uniform float _CylinderRadius;
-            uniform float _Length;
+            uniform float _VerticalGradient;  // >0.5：垂直渐变；否则：圆周渐变
+            uniform float _Dynamic;
+            uniform float _ScrollSpeed;
+            uniform float _UseCustomGradient;
+            uniform float4 _GradColor1;
+            uniform float4 _GradColor2;
+            uniform float4 _GradColor3;
+            uniform float _EndGap;
+            uniform float _Segments;          // 传入为 float，但实际作为整数使用
+            
+            // 封口配置
+            uniform float4 _CapColor;
+            uniform sampler2D _CapTexture;
+            uniform float _UseCapTexture;
+            // 可配置项：是否生成底部封口
+            uniform float _RenderBottomCap;
 
-            struct appdata
-            {
-                float4 vertex : POSITION;
-            };
+            // 内置光源（最多 4 个，使用内置数组）
+            // unity_LightColor, unity_4LightAtten0, unity_4LightPosX0, unity_4LightPosY0, unity_4LightPosZ0, unity_WorldToObject 均由 Unity 内部提供
 
+            // 输入结构（仅传递顶点位置）
+            struct appdata { float4 vertex : POSITION; };
+
+            // 输出结构，扩展了 cap 标记和封口 UV
             struct GSOutput
             {
                 float4 pos : SV_POSITION;
-                float t : TEXCOORD0;
+                float t : TEXCOORD0;   // 用于渐变（侧面根据角度或高度）
+                float cap : TEXCOORD1; // 0：侧面，1：底封口，2：顶封口
+                float2 uvCap : TEXCOORD2; // 封口 UV
             };
 
+            // 顶点着色器：直接传递顶点位置
             GSOutput CylinderVS(appdata v)
             {
                 GSOutput o;
                 o.pos = UnityObjectToClipPos(v.vertex);
                 o.t = 0;
+                o.cap = 0;
+                o.uvCap = float2(0,0);
                 return o;
             }
 
-            [maxvertexcount(136)]
+            // 几何着色器：对每个符合条件的光源生成圆柱体侧面和封口
+            // 这里使用 maxvertexcount 足够容纳 4 光源情况下所有输出（侧面 + 封口）
+            [maxvertexcount(128)]
             void CylinderGS(point GSOutput input[1], inout TriangleStream<GSOutput> triStream)
             {
-                bool foundLight = false;
-                float3 basePos = float3(0, 0, 0);
+                float3 basePos = float3(0,0,0);
+                // 遍历内置4个光源
                 for (int i = 0; i < 4; i++)
                 {
+                    // 判断光源条件（沿用原逻辑）
                     if (length(unity_LightColor[i].rgb) < 0.01)
                     {
                         float lightAtten = unity_4LightAtten0[i];
-                        float range = (0.005 * sqrt(1000000 - lightAtten)) / sqrt(lightAtten);
-                        float modVal = fmod(range, 0.1);
+                        float rangeVal = (0.005 * sqrt(1000000 - lightAtten)) / sqrt(lightAtten);
+                        float modVal = fmod(rangeVal, 0.1);
                         if (abs(modVal - 0.01) < 0.005 || abs(modVal - 0.02) < 0.005)
                         {
-                            foundLight = true;
+                            // 获取光源位置（内置变量）
                             float4 lightWorldPos = float4(
                                 unity_4LightPosX0[i],
                                 unity_4LightPosY0[i],
                                 unity_4LightPosZ0[i],
-                                1
-                            );
-                            float3 tipPos = mul(unity_WorldToObject, lightWorldPos).xyz;
-                            float3 dir = tipPos - basePos;
+                                1.0);
+                            // 转换到物体空间
+                            float3 tipPosOrig = mul(unity_WorldToObject, lightWorldPos).xyz;
+                            float3 dir = tipPosOrig - basePos;
                             float height = length(dir);
                             if (height < 0.001) continue;
                             dir = normalize(dir);
-                            float3 up = abs(dot(dir, float3(0,1,0))) < 0.99 ? float3(0,1,0) : float3(1,0,0);
+                            // 调整末端，留出 _EndGap
+                            float newHeight = height - _EndGap;
+                            if(newHeight < 0.001) continue;
+                            float3 topPos = basePos + dir * newHeight;
+                            
+                            // 计算局部坐标系
+                            float3 up = (abs(dot(dir, float3(0,1,0))) < 0.99) ? float3(0,1,0) : float3(1,0,0);
                             float3 right = normalize(cross(dir, up));
                             up = normalize(cross(right, dir));
 
-                            const int segments = 16;
+                            // 将 _Segments 转为整型值
+                            int segments = (int)_Segments;
+                            float angleStep = 6.2831853 / segments;
+
+                            // 生成侧面：使用三角带，依次输出底环和顶环顶点
                             for (int j = 0; j <= segments; j++)
                             {
-                                float angle = (j / (float)segments) * 6.2831853;
+                                float angle = j * angleStep;
                                 float cosA = cos(angle);
                                 float sinA = sin(angle);
                                 float3 offset = right * cosA * _CylinderRadius + up * sinA * _CylinderRadius;
-
                                 GSOutput vOut;
-                                float3 posBase = basePos + offset;
-                                vOut.pos = UnityObjectToClipPos(float4(posBase, 1));
-                                vOut.t = 0.0;
+                                // 底环顶点
+                                vOut.pos = UnityObjectToClipPos(float4(basePos + offset, 1));
+                                vOut.t = (_VerticalGradient > 0.5) ? 0.0 : (j / (float)segments);
+                                vOut.cap = 0;
+                                vOut.uvCap = float2(0,0);
                                 triStream.Append(vOut);
-                                float3 posTip = tipPos + offset;
-                                vOut.pos = UnityObjectToClipPos(float4(posTip, 1));
-                                vOut.t = 1.0;
+                                // 顶环顶点
+                                vOut.pos = UnityObjectToClipPos(float4(topPos + offset, 1));
+                                vOut.t = (_VerticalGradient > 0.5) ? 1.0 : (j / (float)segments);
+                                vOut.cap = 0;
+                                vOut.uvCap = float2(0,0);
                                 triStream.Append(vOut);
                             }
                             triStream.RestartStrip();
+
+                            // 生成底部封口（三角扇面，cap = 1），仅当 _RenderBottomCap > 0.5 时生成
+                            if (_RenderBottomCap > 0.5)
+                            {
+                                GSOutput center;
+                                center.pos = UnityObjectToClipPos(float4(basePos, 1));
+                                center.t = (_VerticalGradient > 0.5) ? 0.0 : 0.0;
+                                center.cap = 1;
+                                center.uvCap = float2(0.5, 0.5);
+                                for (int j = 0; j < segments; j++)
+                                {
+                                    triStream.Append(center);
+                                    float angle = j * angleStep;
+                                    float cosA = cos(angle);
+                                    float sinA = sin(angle);
+                                    float3 pos = basePos + (right * cosA * _CylinderRadius + up * sinA * _CylinderRadius);
+                                    GSOutput v;
+                                    v.pos = UnityObjectToClipPos(float4(pos, 1));
+                                    v.t = (_VerticalGradient > 0.5) ? 0.0 : (j / (float)segments);
+                                    v.cap = 1;
+                                    v.uvCap = float2(0.5 + 0.5*cosA, 0.5 + 0.5*sinA);
+                                    triStream.Append(v);
+                                    float angleNext = (j+1) * angleStep;
+                                    float cosA2 = cos(angleNext);
+                                    float sinA2 = sin(angleNext);
+                                    pos = basePos + (right * cosA2 * _CylinderRadius + up * sinA2 * _CylinderRadius);
+                                    v.pos = UnityObjectToClipPos(float4(pos, 1));
+                                    v.t = (_VerticalGradient > 0.5) ? 0.0 : ((j+1) / (float)segments);
+                                    v.cap = 1;
+                                    v.uvCap = float2(0.5 + 0.5*cosA2, 0.5 + 0.5*sinA2);
+                                    triStream.Append(v);
+                                    triStream.RestartStrip();
+                                }
+                            }
+
+                            // 生成顶部封口（三角扇面，cap = 2）
+                            {
+                                GSOutput center;
+                                center.pos = UnityObjectToClipPos(float4(topPos, 1));
+                                center.t = (_VerticalGradient > 0.5) ? 1.0 : 1.0;
+                                center.cap = 2;
+                                center.uvCap = float2(0.5, 0.5);
+                                for (int j = 0; j < segments; j++)
+                                {
+                                    triStream.Append(center);
+                                    float angle = j * angleStep;
+                                    float cosA = cos(angle);
+                                    float sinA = sin(angle);
+                                    float3 pos = topPos + (right * cosA * _CylinderRadius + up * sinA * _CylinderRadius);
+                                    GSOutput v;
+                                    v.pos = UnityObjectToClipPos(float4(pos, 1));
+                                    v.t = (_VerticalGradient > 0.5) ? 1.0 : (j / (float)segments);
+                                    v.cap = 2;
+                                    v.uvCap = float2(0.5 + 0.5*cosA, 0.5 + 0.5*sinA);
+                                    triStream.Append(v);
+                                    float angleNext = (j+1) * angleStep;
+                                    float cosA2 = cos(angleNext);
+                                    float sinA2 = sin(angleNext);
+                                    pos = topPos + (right * cosA2 * _CylinderRadius + up * sinA2 * _CylinderRadius);
+                                    v.pos = UnityObjectToClipPos(float4(pos, 1));
+                                    v.t = (_VerticalGradient > 0.5) ? 1.0 : ((j+1) / (float)segments);
+                                    v.cap = 2;
+                                    v.uvCap = float2(0.5 + 0.5*cosA2, 0.5 + 0.5*sinA2);
+                                    triStream.Append(v);
+                                    triStream.RestartStrip();
+                                }
+                            }
                         }
                     }
                 }
-                if (!foundLight)
-                {
-                    GSOutput v;
-                    v.pos = float4(-10000, -10000, 0, 1);
-                    v.t = 0.0;
-                    triStream.Append(v);
-                    triStream.Append(v);
-                    triStream.Append(v);
-                    triStream.RestartStrip();
-                }
             }
 
+            // 片元着色器：侧面部分根据动态/自定义渐变计算颜色，
+            // 封口部分：若 _UseCapTexture 开启则采样贴图，否则与侧面采用相同渐变效果
             fixed4 CylinderPS(GSOutput input) : SV_Target
             {
+                // 封口判断（cap 非 0）
+                if (input.cap > 0.5)
+                {
+                    if (_UseCapTexture > 0.5)
+                        return tex2D(_CapTexture, input.uvCap);
+                    // 否则继续使用动态渐变计算，与侧面一致
+                }
                 float t = input.t;
-                float3 color = 0.5 + 0.5 * cos(6.28318 * t + float3(0.0, 2.094, 4.188));
+                if (_Dynamic > 0.5)
+                {
+                    if (_VerticalGradient > 0.5)
+                        t = frac(t * 0.9 + _Time.x * _ScrollSpeed);
+                    else
+                        t = frac(t + _Time.x * _ScrollSpeed);
+                }
+                float3 color;
+                if (_UseCustomGradient > 0.5)
+                {
+                    if (t < 0.3333)
+                    {
+                        float tt = t / 0.3333;
+                        color = lerp(_GradColor1.rgb, _GradColor2.rgb, tt);
+                    }
+                    else if (t < 0.6666)
+                    {
+                        float tt = (t - 0.3333) / 0.3333;
+                        color = lerp(_GradColor2.rgb, _GradColor3.rgb, tt);
+                    }
+                    else
+                    {
+                        float tt = (t - 0.6666) / 0.3334;
+                        color = lerp(_GradColor3.rgb, _GradColor1.rgb, tt);
+                    }
+                }
+                else
+                {
+                    color = 0.5 + 0.5 * cos(6.28318 * t + float3(0.0, 2.094, 4.188));
+                }
                 return fixed4(color, 1);
             }
             ENDCG
         }
     }
-
+    Fallback "Legacy Shaders/Transparent/VertexLit"
 }
